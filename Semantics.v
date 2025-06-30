@@ -196,6 +196,17 @@ dependent induction Hrb.
     intros Hin. now assert (In DRollback ds1 \/ In DRollback ds2) as Hin'%in_or_app by now right.
 Qed.
 
+Lemma rb_fwd_step_same (c: com) (st: state) (ast: astate) (b: bool) (cl: list conf) (ds: dirs) (os: obs) (c': com) (st': state) (ast': astate) (b' : bool) (cl': list conf):
+    ~(In DRollback ds) ->
+    <((c, st, ast, b • cl))> -->rb_ds^^os <((c', st', ast', b' • cl'))> ->
+    <((c, st, ast, b))> -->fwd_ds^^os <((c', st', ast', b'))>.
+Proof.
+    intros Hnin Hrb.
+    dependent induction Hrb; try now constructor.
+    - constructor. eapply IHHrb; eauto.
+    - firstorder.
+Qed.
+
 Lemma fwd_rb_same (c: com) (st: state) (ast : astate) (b : bool) (ds : dirs) (os : obs) (c' : com) (st' : state) (ast' : astate) (b' : bool) (cl: list conf):
   <((c, st, ast, b))> -->fwd*_ds^^os <((c', st', ast', b'))> ->
   exists cl', <([(c, st, ast, b) :: cl])> -->rb*_ds^^os<([ (c', st', ast', b') :: cl' ])>.
@@ -272,6 +283,31 @@ Proof.
       econstructor; eassumption.
 Qed.
 
+Lemma multi_fwd_app c st ast b d o c' st' ast' b' d' o' c'' st'' ast'' b'':
+    <((c, st, ast, b))> -->fwd*_d^^o <((c', st', ast', b'))> ->
+    <((c', st', ast', b'))> -->fwd*_d'^^o' <((c'', st'', ast'', b''))> ->
+    <((c, st, ast, b))> -->fwd*_d++d'^^o++o' <((c'', st'', ast'', b''))>.
+Proof.
+    intros Hfwd1 Hfwd2.
+    dependent induction Hfwd1.
+    - exact Hfwd2.
+    - specialize (IHHfwd1 Hfwd2).
+      do 2 rewrite <- app_assoc.
+      econstructor; eassumption.
+Qed.
+
+Lemma list_nil_rcons {A: Type} (l: list A):
+    l = [] \/ exists l' x, l = l' ++ [x].
+Proof.
+    induction l.
+    - now left.
+    - destruct IHl.
+      + subst. right. now exists [], a.
+      + destruct H as (l' & x & ->).
+        right. exists (a :: l'), x.
+        apply app_comm_cons.
+Qed.
+
 Lemma rb_rcons_split cl cl' ds d os o:
     <([ cl ])> -->rb*_ds ++ [d]^^os ++ [o] <([ cl'])> ->
     exists cl1 cl2,
@@ -293,36 +329,186 @@ Proof.
         exists cl, cl'. split. 2: easy.
         constructor.
     - change (a :: ds) with ([a] ++ ds) in Hrb. rewrite <- app_assoc in Hrb. apply rb_app_split in Hrb as (cl'' & os1 & os2 & Hrb1 & Hrb2 & Heq).
-      assert (exists os2', os2 = os2' ++ [o]) as [os2' ->] by admit.
+      assert (exists os2', os2 = os2' ++ [o] /\ os = os1 ++ os2') as [os2' [-> ->] ].
+      {
+          apply multi_rb_dirs_obs_same_length in Hrb2.
+          rewrite length_app in Hrb2. cbn in Hrb2.
+          pose proof (list_nil_rcons os2) as [? | (os2' & o' & ->)].
+          { rewrite H in Hrb2. cbn in Hrb2. lia. }
+          exists os2'.
+          rewrite app_assoc in Heq.
+          now apply app_inj_tail in Heq as [-> ->].
+      }
       destruct (IHds _ _ Hrb2) as (cl1 & cl2 & Hmulti & Hrest).
       exists cl1, cl2. split. 2: assumption.
-      assert (os = os1 ++ os2') as -> by admit.
       change (a :: ds) with ([a] ++ ds).
       eapply multi_rb_app; eassumption.
+Qed.
+
+Lemma rb_step_nonempty cl cl' ds os:
+    spec_rb_eval_small_step cl cl' ds os ->
+    exists c st ast b cr c' st' ast' b' cr',
+    cl = (c, st, ast, b) :: cr /\ cl' = (c', st', ast', b') :: cr'.
+Proof.
+    inversion 1; do 10 eexists; split; reflexivity.
+Qed.
+
+Lemma multi_rb_no_dirs_same_conf_stack c st ast b cl c' st' ast' b' cl':
+    <([ (c, st, ast, b) :: cl ])> -->rb*_[]^^[] <([ (c', st', ast', b') :: cl' ])> ->
+    cl = cl'.
+Proof.
+    intros Hmulti. dependent induction Hmulti.
+    - reflexivity.
+    - apply app_eq_nil in x as [-> ->], x0 as [-> ->].
+      assert (exists c1 st1 ast1, cl'0 = (c1, st1, ast1, b) :: cl) as (?&?&?&->).
+      { clear - H. dependent induction H; try (do 3 eexists; reflexivity). specialize (IHspec_rb_eval_small_step _ _ _ _ _ (ltac: (reflexivity)) (ltac: (reflexivity)) (ltac: (reflexivity))) as (?&?&?&IH). invert IH. do 3 eexists; reflexivity. }
+      eapply IHHmulti; reflexivity.
+Qed.
+
+Lemma rb_no_force_no_rollback_same_conf_stack d os c st ast b cl c' st' ast' b' cl':
+    d <> DForce -> d <> DRollback ->
+    <(( c, st, ast, b • cl))> -->rb_[d]^^os <(( c', st', ast', b' • cl'))> -> 
+    cl = cl'.
+Proof.
+    intros Hnf Hnr Hstep.
+    dependent induction Hstep; try congruence.
+    eapply IHHstep; try reflexivity; assumption.
+Qed.
+
+
+Lemma multi_rb_skip_rollback c st ast ds os c' st' ast' b' cl' c'' st'' ast'' b'' cl'':
+    <([ [(c, st, ast, false)] ])> -->rb*_ds^^os <([ (c', st', ast', b') :: cl' ])> ->
+    <(( c', st', ast', b' • cl'))> -->rb_[DRollback]^^[ORollback] <(( c'', st'', ast'', b'' • cl''))> ->
+    exists ds' os', 
+    <([ [(c, st, ast, false)] ])> -->rb*_ds'^^os' <([ (c'', st'', ast'', b'') :: cl'' ])> /\
+    length ds' <= length ds.
+Proof.
+    induction ds in os, c', st', ast', b', cl' |- * using rev_ind.
+    - intros Hmulti Hstep.
+      admit.
+    - intros Hmulti Hstep.
+      assert (exists os' o, os = os' ++ [o]) as (os' & o & ->) by admit.
+      apply rb_rcons_split in Hmulti as (? & ? & Hmulti1 & Hstep' & Hmulti2).
+      pose proof Hstep' as Hstep''.
+      apply rb_step_nonempty in Hstep'' as (?&?&?&?&?&?&?&?&?&?&->&->).
+      pose proof Hmulti2 as Hmulti2'.
+      apply multi_rb_no_dirs_same_conf_stack in Hmulti2'. subst.
+      assert ((x <> DForce \/ x = DForce)) as [Hd | Hd] by (destruct x; try (now left); now right).
+      + apply rb_no_force_no_rollback_same_conf_stack in Hstep'. 2, 3: admit. subst.
+        apply IHds in Hmulti1. 2: {
+            clear - Hstep. dependent induction Hstep.
+            - eapply IHHstep; admit. (* this case isn't really possible, but might have to prove this as its own lemma somehow somewhere *)
+            - constructor.
+        }
+        destruct Hmulti1 as (ds' & os'' & Hexec & Hlen). exists ds', os''. split. 1: assumption.
+        rewrite length_app. cbn. lia.
+      + subst.
+        clear IHds.
+        dependent induction Hstep'.
+        * admit.
+        * exists (ds ++ [DStep]). exists (os' ++ [OBranch (beval x8 be)]). split. 2: do 2 rewrite app_length; cbn; lia.
+          eapply multi_rb_app. 1: exact Hmulti1.
+          (* TODO "invert" Hstep, to get equality*)
+          change [DStep] with ([DStep] ++ []).
+          change [OBranch (beval x8 be)] with ([OBranch (beval x8 be)] ++ []).
+          admit. (* TODO *)
+          
+    (* This lemma would not be used as-is, but it currently serves as a draft for a part of the next proof, where we need to prove a similar statement for pairs of traces. *)
+
 Admitted.
 
-Lemma rb_same_directives_implies_fwd_same_directives c st1 st2 ast1 ast2 os ds c' st1' st2' ast1' ast2' b1' b2' cl1' cl2':
-    <([ [(c, st1, ast1, false)] ])> -->rb*_ds^^os <([ (c', st1', ast1', b1') :: cl1' ])> ->
-    <([ [(c, st2, ast2, false)] ])> -->rb*_ds^^os <([ (c', st2', ast2', b2') :: cl2' ])> ->
+Lemma rb_two_executions_skip_rolled_back_speculation c st1 st2 ast1 ast2 os ds c1' c2' st1' st2' ast1' ast2' b1' b2' cl1' cl2':
+    <([ [(c, st1, ast1, false)] ])> -->rb*_ds^^os <([ (c1', st1', ast1', b1') :: cl1' ])> ->
+    <([ [(c, st2, ast2, false)] ])> -->rb*_ds^^os <([ (c2', st2', ast2', b2') :: cl2' ])> ->
     exists ds' os',
-    <(( c, st1, ast1, false))> -->fwd*_ds'^^os' <((c', st1', ast1', b1'))> /\
-    <(( c, st2, ast2, false))> -->fwd*_ds'^^os' <((c', st2', ast2', b2'))>.
+    <([ [(c, st1, ast1, false)] ])> -->rb*_ds'^^os' <([ (c1', st1', ast1', b1') :: cl1' ])> /\
+    <([ [(c, st2, ast2, false)] ])> -->rb*_ds'^^os' <([ (c2', st2', ast2', b2') :: cl2' ])> /\
+    ~In DRollback ds'.
 Proof.
-    induction ds using rev_ind. (*TODO needs to be quantified*)
-    - intros Hrb1 Hrb2. apply rb_fwd_same in Hrb1, Hrb2. 2, 3: easy.
+    remember (length ds) as n.
+    induction n as [| n IHn] in ds, Heqn, os, c1', c2', st1', st2', ast1', ast2', b1', b2', cl1', cl2' |- * using strong_induction_le.
+    (*induction ds in os, c1', c2', st1', st2', ast1', ast2', b1', b2', cl1', cl2' |- * using rev_ind. [>TODO needs to be quantified<]*)
+    - exists ds, os. split; [assumption|]. split; [assumption|].
+      symmetry in Heqn.
+      apply length_zero_iff_nil in Heqn. subst.
+      firstorder.
+    - intros Hrb1 Hrb2.
+      assert (exists ds' d, ds = ds' ++ [d]) as (ds' & d & ->) by (destruct (list_nil_rcons ds); [apply length_zero_iff_nil in H; lia | exact H]).
+      assert (exists os' o, os = os' ++ [o]) as (os' & o & ->) by (apply multi_rb_dirs_obs_same_length in Hrb1; destruct (list_nil_rcons os); [apply length_zero_iff_nil in H; lia | exact H]).
+      apply rb_rcons_split in Hrb1 as (cl11 & cl21 & Hmulti11 & Hsingle1 & Hmulti21), Hrb2 as (cl42 & cl22 & Hmulti12 & Hsingle2 & Hmulti22).
+      assert ((d <> DRollback) \/ d = DRollback) as [Hd | Hd] by (destruct d; try (now left); now right).
+      + specialize (IHn (length ds')).
+        assert (length ds' <= n) as Hlen.
+        {
+            rewrite length_app in Heqn. simpl in Heqn. lia.
+        }
+        pose proof Hsingle1 as Hsingle1'.
+        apply rb_step_nonempty in Hsingle1' as (?&?&?&?&?&?&?&?&?&?&->&->).
+        pose proof Hsingle2 as Hsingle2'.
+        apply rb_step_nonempty in Hsingle2' as (?&?&?&?&?&?&?&?&?&?&->&->).
+        specialize (IHn Hlen _ _ _ _ _ _ _ _ _ _ _ _ (ltac: (reflexivity)) Hmulti11 Hmulti12) as (dsIH & osIH & Hnew1 & Hnew2 & Hnin).
+        exists (dsIH ++ [d]), (osIH ++ [o]). split; [|split].
+        * eapply multi_rb_app. 1: exact Hnew1. change [d] with ([d] ++ []). change [o] with ([o] ++ []). econstructor; eassumption.
+        * eapply multi_rb_app. 1: exact Hnew2. change [d] with ([d] ++ []). change [o] with ([o] ++ []). econstructor; eassumption.
+        * intros [Hin1 | Hin2]%in_app_or; firstorder.
+      + specialize (IHn (length ds')).
+        assert (length ds' <= n) as Hlen.
+        {
+            rewrite length_app in Heqn. simpl in Heqn. lia.
+        }
+        pose proof Hsingle1 as Hsingle1'.
+        apply rb_step_nonempty in Hsingle1' as (?&?&?&?&?&?&?&?&?&?&->&->).
+        pose proof Hsingle2 as Hsingle2'.
+        apply rb_step_nonempty in Hsingle2' as (?&?&?&?&?&?&?&?&?&?&->&->).
+        specialize (IHn Hlen _ _ _ _ _ _ _ _ _ _ _ _ (ltac: (reflexivity)) Hmulti11 Hmulti12) as (dsIH & osIH & Hnew1 & Hnew2 & Hnin). subst.
+        clear Heqn Hlen.
+        (* The draft of the previous proof gives some idea how to proceed here, but is still highly unfinished. *)
+Admitted.
+
+
+(* This Lemma is in a "given-up-upon" state: It will be much easier to prove the lemma above, then use `rb_fwd_same` from above.
+*)
+Lemma rb_same_directives_implies_fwd_same_directives c st1 st2 ast1 ast2 os ds c1' c2' st1' st2' ast1' ast2' b1' b2' cl1' cl2':
+    <([ [(c, st1, ast1, false)] ])> -->rb*_ds^^os <([ (c1', st1', ast1', b1') :: cl1' ])> ->
+    <([ [(c, st2, ast2, false)] ])> -->rb*_ds^^os <([ (c2', st2', ast2', b2') :: cl2' ])> ->
+    exists ds' os',
+    <(( c, st1, ast1, false))> -->fwd*_ds'^^os' <((c1', st1', ast1', b1'))> /\
+    <(( c, st2, ast2, false))> -->fwd*_ds'^^os' <((c2', st2', ast2', b2'))>.
+Proof.
+    remember (length ds) as n.
+    induction n as [| n IHn] in ds, Heqn, os, c1', c2', st1', st2', ast1', ast2', b1', b2', cl1', cl2' |- * using strong_induction_le.
+    (*induction ds in os, c1', c2', st1', st2', ast1', ast2', b1', b2', cl1', cl2' |- * using rev_ind. [>TODO needs to be quantified<]*)
+    - symmetry in Heqn. apply length_zero_iff_nil in Heqn. subst.
+      intros Hrb1 Hrb2. apply rb_fwd_same in Hrb1, Hrb2. 2, 3: easy.
       exists [], os. easy.
     - intros Hrb1 Hrb2.
-      assert (exists os' o, os = os' ++ [o]) as (os' & o & ->) by admit.
+      assert (exists ds' d, ds = ds' ++ [d]) as (ds' & d & ->) by (destruct (list_nil_rcons ds); [apply length_zero_iff_nil in H; lia | exact H]).
+      assert (exists os' o, os = os' ++ [o]) as (os' & o & ->) by (apply multi_rb_dirs_obs_same_length in Hrb1; destruct (list_nil_rcons os); [apply length_zero_iff_nil in H; lia | exact H]).
       apply rb_rcons_split in Hrb1 as (cl11 & cl21 & Hmulti11 & Hsingle1 & Hmulti21), Hrb2 as (cl42 & cl22 & Hmulti12 & Hsingle2 & Hmulti22).
-      destruct x.
-      + admit. (* I suppose all we want is that configuration lists are nonempty, so that we can apply IHds*)
-      + admit.
-      + admit.
-      + admit.
+      assert ((d <> DRollback) \/ d = DRollback) as [Hd | Hd] by (destruct d; try (now left); now right).
+      + assert (~In DRollback [d]) as Hnin by firstorder.
+        pose proof Hsingle1 as Hsingle1'.
+        apply rb_step_nonempty in Hsingle1' as (?&?&?&?&?&?&?&?&?&?&->&->).
+        apply rb_fwd_step_same in Hsingle1. 2: assumption.
+        pose proof Hsingle2 as Hsingle2'.
+        apply rb_step_nonempty in Hsingle2' as (?&?&?&?&?&?&?&?&?&?&->&->).
+        apply rb_fwd_step_same in Hsingle2. 2: assumption.
+        specialize (IHn (length ds')).
+        assert (length ds' <= n) as Hlen.
+        {
+            rewrite length_app in Heqn. simpl in Heqn. lia.
+        }
+        specialize (IHn Hlen _ _ _ _ _ _ _ _ _ _ _ _ (ltac: (reflexivity)) Hmulti11 Hmulti12) as (dsIH & osIH & Hfwd1 & Hfwd2).
+        exists (dsIH ++ [d]), (osIH ++ [o]). split.
+        * apply rb_fwd_same in Hmulti21. 2: firstorder.
+          eapply multi_fwd_app. 1: exact Hfwd1. change [d] with ([d] ++ []). change [o] with ([o] ++ []). econstructor; eassumption.
+        * apply rb_fwd_same in Hmulti22. 2: firstorder.
+          eapply multi_fwd_app. 1: exact Hfwd2. change [d] with ([d] ++ []). change [o] with ([o] ++ []). econstructor; eassumption.
       + (* in the paper: by induction on the ds' obtained from IHds, in order to obtain only the part from before the latest force.
            easier in their version, because they don't have silent steps.
            Further, their fwd semantics still keeps a stack, whereas ours does not; currently unclear how we might obtain matching configurations therefore...
 
            Perhaps: prove this "undoing execution" part on rb semantics, before applying IHds. would require induction on length instead of directly on ds
         *)
+        
 Admitted.
