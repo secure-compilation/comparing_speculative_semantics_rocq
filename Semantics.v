@@ -29,6 +29,17 @@ Inductive observation : Type :=
 
 Definition obs := list observation.
 
+Inductive hd_ctxt : Type :=
+  | CHole
+  | CSeq (c1 : hd_ctxt) (c2 : com).
+
+Fixpoint subst_hd ctxt c : com := match ctxt with 
+                                  | CHole => c
+                                  | CSeq ctxt' c2 => Seq (subst_hd ctxt' c) c2
+                                  end.
+
+Notation "C '<[' c ']>'" := (subst_hd C c).
+
 Definition conf := (com * state * astate * bool)%type.
 
 Reserved Notation
@@ -42,9 +53,12 @@ Inductive spec_rb_eval_small_step :
   | SpecRb_Asgn  : forall st ast b e n x cl,
       aeval st e = n ->
       <((x := e, st, ast, b • cl))> -->rb_[]^^[] <((skip, x !-> n; st, ast, b • cl))>
-  | SpecRb_Seq : forall c1 st ast b ds os c1t stt astt bt c2 cl cl',
-      <((c1, st, ast, b • cl))>  -->rb_ds^^os <((c1t, stt, astt, bt • cl'))>  ->
-      <(((c1;c2), st, ast, b • cl))>  -->rb_ds^^os <(((c1t;c2), stt, astt, bt • cl'))>
+  | SpecRb_Seq : forall c1 st ast b ds os c1t stt astt bt c2 cl,
+      <((c1, st, ast, b • cl))>  -->rb_ds^^os <((c1t, stt, astt, bt • cl))>  ->
+      <(((c1;c2), st, ast, b • cl))>  -->rb_ds^^os <(((c1t;c2), stt, astt, bt • cl))>
+  | SpecRb_Seq_Grow : forall c1 st ast b ds os c1t stt astt bt c1t' stt' astt' bt' c2 cl,
+          <((c1, st, ast, b • cl))> -->rb_ds^^os <((c1t, stt, astt, bt • (c1t', stt', astt', bt') :: cl))> ->
+          <(((c1; c2), st, ast, b • cl))> -->rb_ds^^os <(((c1t; c2), stt, astt, bt • (<{c1t'; c2}>, stt', astt', bt') :: cl))>
   | SpecRb_Seq_Skip : forall st ast b c2 cl,
       <(((skip;c2), st, ast, b • cl))>  -->rb_[]^^[] <((c2, st, ast, b • cl))>
   | SpecRb_If : forall be ct cf st ast b c' b' cl,
@@ -176,6 +190,9 @@ Inductive multi_spec_fwd (c:com) (st:state) (ast:astate) (b:bool) :
     (multi_spec_fwd c st ast b ct stt astt bt ds os).
 
 Ltac invert H := inversion H; subst.
+
+Ltac cyclic H := apply (f_equal (@length conf)) in H; cbn in H; lia.
+
 Require Import Coq.Program.Equality.
 
 Lemma rb_fwd_same (c: com) (st: state) (ast: astate) (b: bool) (cl: list conf) (ds: dirs) (os: obs) (c': com) (st': state) (ast': astate) (b' : bool) (cl': list conf):
@@ -191,6 +208,7 @@ dependent induction Hrb.
   apply (multi_spec_fwd_trans c st ast b c0 st0 ast0 b0).
   + clear IHHrb Hrb. dependent induction H; try now constructor.
     * constructor. eapply IHspec_rb_eval_small_step; try reflexivity. assumption.
+    * constructor. eapply IHspec_rb_eval_small_step; try reflexivity. assumption.
     * cbn in Hnin. firstorder.
   + eapply IHHrb. 2, 3: reflexivity.
     intros Hin. now assert (In DRollback ds1 \/ In DRollback ds2) as Hin'%in_or_app by now right.
@@ -204,6 +222,7 @@ Proof.
     intros Hnin Hrb.
     dependent induction Hrb; try now constructor.
     - constructor. eapply IHHrb; eauto.
+    - constructor. eapply IHHrb; eauto.
     - firstorder.
 Qed.
 
@@ -215,14 +234,17 @@ intros Hfwd. revert cl.
 dependent induction Hfwd.
 - intros cl. exists cl. constructor.
 - intros cl.
-  assert (exists cl', <(( c, st, ast, b • cl))> -->rb_ds1^^os1 <((c', st', ast', b' • cl'))>) as [cl' Hrb].
+  assert (<(( c, st, ast, b • cl))> -->rb_ds1^^os1 <((c', st', ast', b' • cl))> \/ exists ci sti asti bi, <(( c, st, ast, b • cl))> -->rb_ds1^^os1 <((c', st', ast', b' • (ci, sti, asti, bi) :: cl))>) as Hrb.
   {
-      clear Hfwd IHHfwd. dependent induction H; try (eexists; now constructor).
-      specialize (IHspec_fwd_eval_small_step cl) as [cl' IH].
-      exists cl'. now constructor.
+      clear Hfwd IHHfwd. dependent induction H; try (left; now constructor).
+      - destruct (IHspec_fwd_eval_small_step cl) as [Hrb | (ci & sti & asti & bi & Hrb)].
+        + left. now constructor.
+        + right. exists <{ci ; c2}>, sti, asti, bi. now constructor.
+      - right. subst. do 4 eexists; now constructor.
   }
-  specialize (IHHfwd cl') as [cl'' IHHfwd].
-  exists cl''. econstructor; eassumption.
+  destruct Hrb as [Hrb | (? & ? & ? & ? & Hrb)].
+  + specialize (IHHfwd cl) as [cl' IHHfwd]. exists cl'. econstructor; eassumption.
+  + specialize (IHHfwd ((x, x0, x1, x2) :: cl)) as [cl' IHHfwd]. eexists. econstructor; eassumption.
 Qed.
 
 Lemma spec_rb_dirs_obs cl cl' ds os:
@@ -361,7 +383,12 @@ Proof.
     - reflexivity.
     - apply app_eq_nil in x as [-> ->], x0 as [-> ->].
       assert (exists c1 st1 ast1, cl'0 = (c1, st1, ast1, b) :: cl) as (?&?&?&->).
-      { clear - H. dependent induction H; try (do 3 eexists; reflexivity). specialize (IHspec_rb_eval_small_step _ _ _ _ _ (ltac: (reflexivity)) (ltac: (reflexivity)) (ltac: (reflexivity))) as (?&?&?&IH). invert IH. do 3 eexists; reflexivity. }
+      { clear - H. dependent induction H; try (do 3 eexists; reflexivity).
+          - specialize (IHspec_rb_eval_small_step _ _ _ _ _ (ltac: (reflexivity)) (ltac: (reflexivity)) (ltac: (reflexivity))) as (?&?&?&IH).
+            invert IH. do 3 eexists; reflexivity. 
+          - specialize (IHspec_rb_eval_small_step _ _ _ _ _ (ltac: (reflexivity)) (ltac: (reflexivity)) (ltac: (reflexivity))) as (?&?&?&IH).
+            cyclic IH.
+      }
       eapply IHHmulti; reflexivity.
 Qed.
 
@@ -372,9 +399,39 @@ Lemma rb_no_force_no_rollback_same_conf_stack d os c st ast b cl c' st' ast' b' 
 Proof.
     intros Hnf Hnr Hstep.
     dependent induction Hstep; try congruence.
-    eapply IHHstep; try reflexivity; assumption.
+    eapply IHHstep; try reflexivity. 1, 2: assumption.
+    specialize (IHHstep _ _ _ _ _ _ _ _ _ _ _ Hnf Hnr (ltac: (reflexivity)) (ltac: (reflexivity)) (ltac: (reflexivity))).
+    cyclic IHHstep.
+    Unshelve. all: assumption. (*Remnants of eapply in the contradictory case, do not matter*)
 Qed.
 
+Lemma rb_rollback_pops_stack os c st ast b cl cl':
+    spec_rb_eval_small_step ((c, st, ast, b) :: cl) cl' [DRollback] os ->
+    cl = cl'.
+Proof.
+    intros Hstep.
+    dependent induction Hstep.
+    - specialize (IHHstep _ _ _ _ _ (ltac: (reflexivity)) (ltac: (reflexivity))). cyclic IHHstep.
+    - specialize (IHHstep _ _ _ _ _ (ltac: (reflexivity)) (ltac: (reflexivity))). cyclic IHHstep.
+    - reflexivity.
+Qed.
+
+Lemma rb_force_grows_stack os c st ast b cl c' st' ast' b' cl':
+    <(( c, st, ast, b • cl))> -->rb_[DForce]^^os <(( c', st', ast', b' • cl'))> -> 
+    exists C be ct cf, c = C<[<{if be then ct else cf end}>]> /\
+    c' = C<[if (beval st be) then cf else ct]> /\ st' = st /\ ast' = ast /\ b' = true /\
+    cl' = (C<[if (beval st be) then ct else cf]>, st, ast, b) :: cl.
+Proof.
+    intro Hstep.
+    dependent induction Hstep.
+    - edestruct IHHstep as (? & ? & ? & ? & H ). 1-3: reflexivity.
+      destruct H as (-> & -> & -> & -> & -> & H).
+      cyclic H.
+    - edestruct IHHstep as (C & be & ct & cf & H). 1-3: reflexivity.
+      destruct H as (->&->&->&->&->&H). invert H; subst. cbn.
+      exists (CSeq C c2), be, ct, cf. repeat split; try reflexivity.
+    - exists CHole. do 3 eexists; repeat split; reflexivity.
+Qed.
 
 Lemma multi_rb_skip_rollback c st ast ds os c' st' ast' b' cl' c'' st'' ast'' b'' cl'':
     <([ [(c, st, ast, false)] ])> -->rb*_ds^^os <([ (c', st', ast', b') :: cl' ])> ->
@@ -396,22 +453,29 @@ Proof.
       assert ((x <> DForce \/ x = DForce)) as [Hd | Hd] by (destruct x; try (now left); now right).
       + apply rb_no_force_no_rollback_same_conf_stack in Hstep'. 2, 3: admit. subst.
         apply IHds in Hmulti1. 2: {
-            clear - Hstep. dependent induction Hstep.
-            - eapply IHHstep; admit. (* this case isn't really possible, but might have to prove this as its own lemma somehow somewhere *)
+            clear - Hstep. dependent destruction Hstep.
+            - exfalso. dependent induction Hstep.
+              + eapply IHHstep; reflexivity.
+              + cyclic x.
+              + cyclic x.
+            - exfalso. dependent induction Hstep.
+              + cyclic x.
+              + eapply IHHstep; reflexivity.
+              + cyclic x.
             - constructor.
         }
         destruct Hmulti1 as (ds' & os'' & Hexec & Hlen). exists ds', os''. split. 1: assumption.
         rewrite length_app. cbn. lia.
       + subst.
-        clear IHds.
-        dependent induction Hstep'.
-        * admit.
-        * exists (ds ++ [DStep]). exists (os' ++ [OBranch (beval x8 be)]). split. 2: do 2 rewrite app_length; cbn; lia.
-          eapply multi_rb_app. 1: exact Hmulti1.
-          (* TODO "invert" Hstep, to get equality*)
-          change [DStep] with ([DStep] ++ []).
-          change [OBranch (beval x8 be)] with ([OBranch (beval x8 be)] ++ []).
-          admit. (* TODO *)
+        apply rb_force_grows_stack in Hstep' as (C & be & ct & cf & H1 & H2 & H3 & H4 & H5 & H6). subst.
+        exists (ds ++ [DStep]), (os' ++ [OBranch (beval x3 be)]). split. 2: do 2 rewrite app_length; cbn; lia.
+        eapply multi_rb_app. 1: eassumption.
+        change [DStep] with ([DStep] ++ []).
+        change [OBranch (beval x3 be)] with ([OBranch (beval x3 be)] ++ []).
+        apply rb_rollback_pops_stack in Hstep. invert Hstep. subst.
+        econstructor. 2: constructor.
+        clear.
+        induction C; cbn; now constructor.
           
     (* This lemma would not be used as-is, but it currently serves as a draft for a part of the next proof, where we need to prove a similar statement for pairs of traces. *)
 
