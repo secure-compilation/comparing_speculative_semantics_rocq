@@ -80,10 +80,11 @@ Inductive spec_rb_eval_small_step :
   | SpecRb_While : forall be c st ast b cl,
       <((while be do c end, st, ast, b • cl))> -->rb_[]^^[]
       <((if be then c; while be do c end else skip end, st, ast, b • cl))>
-  | SpecRb_ARead : forall x a ie st ast b i cl,
+  | SpecRb_ARead : forall x a ie st ast b i cl d a' i',
       aeval st ie = i ->
       i < length (ast a) ->
-      <((x <- a[[ie]], st, ast, b • cl))> -->rb_[DStep]^^[OARead a i]
+      d = DStep \/ d = DLoad a' i' ->
+      <((x <- a[[ie]], st, ast, b • cl))> -->rb_[d]^^[OARead a i]
       <((skip, x !-> nth i (ast a) 0; st, ast, b • cl))>
   | SpecRb_ARead_U : forall x a ie st ast i a' i' cl,
       aeval st ie = i ->
@@ -91,11 +92,12 @@ Inductive spec_rb_eval_small_step :
       i' < length (ast a') ->
       <((x <- a[[ie]], st, ast, true • cl))> -->rb_[DLoad a' i']^^[OARead a i]
       <((skip, x !-> nth i' (ast a') 0; st, ast, true • cl))>
-  | SpecRb_Write : forall a ie e st ast b i n cl,
+  | SpecRb_Write : forall a ie e st ast b i n cl d a' i',
       aeval st e = n ->
       aeval st ie = i ->
       i < length (ast a) ->
-      <((a[ie] <- e, st, ast, b • cl))> -->rb_[DStep]^^[OAWrite a i]
+      d = DStep \/ d = DStore a' i' ->
+      <((a[ie] <- e, st, ast, b • cl))> -->rb_[d]^^[OAWrite a i]
       <((skip, st, a !-> upd i (ast a) n; ast, b • cl))>
   | SpecRb_Write_U : forall a ie e st ast i n a' i' cl,
       aeval st e = n ->
@@ -151,10 +153,11 @@ Inductive spec_fwd_eval_small_step :
   | SpecFwd_While : forall be c st ast b,
       <((while be do c end, st, ast, b))> -->fwd_[]^^[]
       <((if be then c; while be do c end else skip end, st, ast, b))>
-  | SpecFwd_ARead : forall x a ie st ast b i,
+  | SpecFwd_ARead : forall x a ie st ast b i d a' i',
       aeval st ie = i ->
       i < length (ast a) ->
-      <((x <- a[[ie]], st, ast, b))> -->fwd_[DStep]^^[OARead a i]
+      d = DStep \/ d = DLoad a' i' ->
+      <((x <- a[[ie]], st, ast, b))> -->fwd_[d]^^[OARead a i]
       <((skip, x !-> nth i (ast a) 0; st, ast, b))>
   | SpecFwd_ARead_U : forall x a ie st ast i a' i',
       aeval st ie = i ->
@@ -162,11 +165,12 @@ Inductive spec_fwd_eval_small_step :
       i' < length (ast a') ->
       <((x <- a[[ie]], st, ast, true))> -->fwd_[DLoad a' i']^^[OARead a i]
       <((skip, x !-> nth i' (ast a') 0; st, ast, true))>
-  | SpecFwd_Write : forall a ie e st ast b i n,
+  | SpecFwd_Write : forall a ie e st ast b i n d a' i',
       aeval st e = n ->
       aeval st ie = i ->
       i < length (ast a) ->
-      <((a[ie] <- e, st, ast, b))> -->fwd_[DStep]^^[OAWrite a i]
+      d = DStep \/ d = DStore a' i' ->
+      <((a[ie] <- e, st, ast, b))> -->fwd_[d]^^[OAWrite a i]
       <((skip, st, a !-> upd i (ast a) n; ast, b))>
   | SpecFwd_Write_U : forall a ie e st ast i n a' i',
       aeval st e = n ->
@@ -216,6 +220,8 @@ dependent induction Hrb.
   + clear IHHrb Hrb. dependent induction H; try now constructor.
     * constructor. eapply IHspec_rb_eval_small_step; try reflexivity. assumption.
     * constructor. eapply IHspec_rb_eval_small_step; try reflexivity. assumption.
+    * eapply SpecFwd_ARead; try eassumption. reflexivity.
+    * eapply SpecFwd_Write; try eassumption; reflexivity.
     * cbn in Hnin. firstorder.
   + eapply IHHrb. 2, 3: reflexivity.
     intros Hin. now assert (In DRollback ds1 \/ In DRollback ds2) as Hin'%in_or_app by now right.
@@ -230,6 +236,8 @@ Proof.
     dependent induction Hrb; try now constructor.
     - constructor. eapply IHHrb; eauto.
     - constructor. eapply IHHrb; eauto.
+    - econstructor; eauto.
+    - econstructor; eauto.
     - firstorder.
 Qed.
 
@@ -248,6 +256,8 @@ dependent induction Hfwd.
         + left. now constructor.
         + right. exists <{ci ; c2}>, sti, asti, bi. now constructor.
       - right. subst. do 4 eexists; now constructor.
+      - left; econstructor; eauto.
+      - left; econstructor; eauto.
   }
   destruct Hrb as [Hrb | (? & ? & ? & ? & Hrb)].
   + specialize (IHHfwd cl) as [cl' IHHfwd]. exists cl'. econstructor; eassumption.
@@ -420,6 +430,8 @@ Proof.
     dependent induction Hstep.
     - specialize (IHHstep _ _ _ _ _ (ltac: (reflexivity)) (ltac: (reflexivity))). cyclic IHHstep.
     - specialize (IHHstep _ _ _ _ _ (ltac: (reflexivity)) (ltac: (reflexivity))). cyclic IHHstep.
+    - invert H1; congruence.
+    - invert H2; congruence.
     - reflexivity.
 Qed.
 
@@ -439,6 +451,8 @@ Proof.
       destruct H as (->&->&->&->&->&H&->). invert H; subst. cbn.
       exists (CSeq C c2), be, ct, cf. repeat split; try reflexivity.
     - exists CHole. do 3 eexists; repeat split; reflexivity.
+    - invert H1; congruence.
+    - invert H2; congruence.
 Qed.
 
 Lemma multi_rb_skip_rollback {c st1 st2 ast1 ast2 ds os c1' c2' st1' st2' ast1' ast2' b1' b2' cl1'  cl2' c1'' c2'' st1'' st2'' ast1'' ast2'' b1'' b2'' cl1'' cl2''}:
@@ -596,6 +610,8 @@ Proof.
             dependent induction Hsingle1.
             - eapply IHHsingle1; reflexivity.
             - eapply IHHsingle1; reflexivity.
+            - invert H1; congruence.
+            - invert H2; congruence.
             - reflexivity.
         }
         pose proof (multi_rb_skip_rollback Hnin Hnew1 Hsingle1 Hnew2 Hsingle2) as (dsnew & osnew & H1 & H2 & Hnin' & _).
@@ -665,6 +681,8 @@ Proof.
     dependent induction H.
     - eapply IHspec_rb_eval_small_step; reflexivity.
     - eapply IHspec_rb_eval_small_step; reflexivity.
+    - destruct H1; congruence.
+    - destruct H2; congruence.
     - reflexivity.
 Qed.
 
@@ -794,14 +812,14 @@ Inductive spec_am_eval_small_step (swin : nat) (layout: list string):
         enabled w ->
       aeval st ie = i ->
       accessed_location ast layout a i = Some (b, j) ->
-      <((x <- a[[ie]], st, ast, w • cl))> -->am(swin,layout)^^[OARead b j]
+      <((x <- a[[ie]], st, ast, w • cl))> -->am(swin,layout)^^[OARead a i]
       <((skip, x !-> nth j (ast b) 0; st, ast, decr w • cl))>
   | SpecAM_Write : forall a ie e st ast w i b j n cl,
           enabled w ->
       aeval st e = n ->
       aeval st ie = i ->
       accessed_location ast layout a i = Some (b, j) -> 
-      <((a[ie] <- e, st, ast, w • cl))> -->am(swin,layout)^^[OAWrite b j]
+      <((a[ie] <- e, st, ast, w • cl))> -->am(swin,layout)^^[OAWrite a i]
       <((skip, st, b !-> upd j (ast b) n; ast, decr w • cl))>
   | SpecAM_Rollback : forall c st ast w c' st' ast' b' cl,
           ~(enabled w) ->
@@ -1143,19 +1161,41 @@ Qed.
 
 Lemma am_oread_extract {swin layout a i c st ast w cl c' st' ast' w' cl'}:
     <(( c, st, ast, w • cl))> -->am(swin, layout)^^[OARead a i] <(( c', st', ast', w' • cl'))> ->
-    exists C a' e x, c = C<[<{x <- a' [[e]]}>]> /\ c' = C<[<{skip}>]> /\ st' = (x !-> nth i (ast' a) 0; st) /\ ast' = ast /\ w' = decr w /\ cl' = cl /\ accessed_location ast layout a' (aeval st e) = Some (a, i).
+    exists C e x b j, c = C<[<{x <- a [[e]]}>]> /\ c' = C<[<{skip}>]> /\ st' = (x !-> nth j (ast' b) 0; st) /\ ast' = ast /\ w' = decr w /\ cl' = cl /\ i = aeval st e /\ accessed_location ast layout a (aeval st e) = Some (b, j).
 Proof.
     intro Hstep.
     dependent induction Hstep.
-    - specialize (IHHstep _ _ _ _ _ _ _ _ _ _ _ _ (ltac: (reflexivity)) (ltac: (reflexivity)) (ltac: (reflexivity))) as (C & a' & e & x & -> & -> & -> & -> & -> & _ & H).
-      exists (CSeq C c2), a', e, x. cbn. repeat split; try reflexivity. assumption.
-    - specialize (IHHstep _ _ _ _ _ _ _ _ _ _ _ _ (ltac: (reflexivity)) (ltac: (reflexivity)) (ltac: (reflexivity))) as (C & a' & e & x & -> & -> & -> & -> & -> & H & _).
+    - specialize (IHHstep _ _ _ _ _ _ _ _ _ _ _ _ (ltac: (reflexivity)) (ltac: (reflexivity)) (ltac: (reflexivity))) as (C & e & x & b & j & -> & -> & -> & -> & -> & _ & -> & H).
+      exists (CSeq C c2), e, x, b, j. cbn. repeat split; try reflexivity. assumption.
+    - specialize (IHHstep _ _ _ _ _ _ _ _ _ _ _ _ (ltac: (reflexivity)) (ltac: (reflexivity)) (ltac: (reflexivity))) as (C & e & x & b & j & -> & -> & -> & -> & -> & H & _).
       cyclic H.
-    - exists CHole, a0, ie, x. firstorder.
+    - exists CHole, ie, x, b, j. firstorder.
 Qed.
 
+Lemma am_preserves_lengths {swin layout c st ast os c' st' ast' w' cl'}:
+    <([ [(c, st, ast, None)] ])> -->am(swin,layout)*^^os <([ (c', st', ast', w') :: cl' ])> ->
+    forall a, length (ast a) = length (ast' a).
+Proof.
+Admitted.
+
+Lemma eq_lengths_same_accessed_location layout ast1 ast2 a i:
+    (forall a, length (ast1 a) = length (ast2 a)) ->
+    accessed_location ast1 layout a i = accessed_location ast2 layout a i.
+Proof.
+    intros Heq.
+    induction layout.
+    - cbn. reflexivity.
+    - unfold accessed_location. destruct (a0 =? a) eqn: Hai.
+      + clear IHlayout Hai. induction layout in i, a0 |-*.
+        * unfold accessed_location_offset. rewrite (Heq a0). reflexivity.
+        * simpl.
+          rewrite (Heq a0). destruct (i <? length (ast2 a0))%nat. 1: reflexivity.
+          specialize (IHlayout a1 (i - length (ast2 a0))). simpl in IHlayout. exact IHlayout.
+      + apply IHlayout.
+Qed.
 
 Lemma am_trace_pair_to_rb_trace_pair swin layout c st1 st2 ast1 ast2 c1' c2' st1' st2' ast1' ast2' w1' w2' cl1' cl2' os1 os2:
+    (forall a, length (ast1 a) = length (ast2 a)) -> 
     (forall ds c1' c2' st1' st2' ast1' ast2' b1' b2' cl1' cl2' os1 os2, 
     <([ [(c, st1, ast1, false)] ])> -->rb*_ds^^os1 <([ (c1', st1', ast1', b1') :: cl1' ])> ->
     <([ [(c, st2, ast2, false)] ])> -->rb*_ds^^os2 <([ (c2', st2', ast2', b2') :: cl2' ])> ->
@@ -1168,7 +1208,7 @@ Lemma am_trace_pair_to_rb_trace_pair swin layout c st1 st2 ast1 ast2 c1' c2' st1
     <([ [(c, st2, ast2, false)] ])> -->rb*_ds^^os2 <([ (c2', st2', ast2', b2') :: cl2'rb ])> /\
     (match w1' with Some _ => true | None => false end = b1' /\ conf_am_rb_equiv cl1' cl1'rb) /\ (match w2' with Some _ => true | None => false end = b2' /\ conf_am_rb_equiv cl2' cl2'rb).
 Proof.
-    intros Hrb_same Ham1 Ham2 Heqlen.
+    intros Heq_lengths Hrb_same Ham1 Ham2 Heqlen.
     induction os1 in c1', c2', st1', st2', ast1', ast2', w1', w2', cl1', cl2', os2, Ham1, Ham2, Heqlen |-* using rev_ind.
     - exists [], false, false, [], [].
       cbn in Heqlen. symmetry in Heqlen. rewrite length_zero_iff_nil in Heqlen. subst.
@@ -1243,7 +1283,7 @@ Proof.
           { pose proof (am_no_leak_same_spec_state Hmulti22). destruct w12; cbn in H0. 
               - destruct n, w2'; try reflexivity.
                 + assert (@None nat = None) by reflexivity. apply H0 in H1. congruence.
-          + assert (@None nat = None) by reflexivity. apply H0 in H1. congruence.
+                + assert (@None nat = None) by reflexivity. apply H0 in H1. congruence.
               - destruct w2'. 1: reflexivity. assert (@None nat = None) by reflexivity. apply H0 in H1. congruence.
           }
           pose proof (am_no_leak_same_spec_state Hmulti21). 
@@ -1265,23 +1305,112 @@ Proof.
               dependent induction Hstep1; invert Hstep2; try contradiction; try (eapply IHHstep1; try reflexivity; eassumption).
               do 2 eexists; reflexivity.
           }
-          pose proof (am_oread_extract Hstep1) as (C & aa & e & x & -> & -> & -> & -> & -> & -> & Hal1).
-          pose proof (am_oread_extract Hstep2) as (C' & aa' & e' & x' & H & -> & -> & -> & -> & -> & Hal2).
-          assert (C' = C /\ aa' = aa /\ e' = e /\ x' = x) as (-> & -> & -> & ->).
+          pose proof (am_oread_extract Hstep1) as (C & e & x & b & j & -> & -> & -> & -> & -> & -> & -> & Hal1).
+          pose proof (am_oread_extract Hstep2) as (C' & e' & x' & b' & j' & H & -> & -> & -> & -> & -> & -> & Hal2).
+          assert (C' = C /\ a' = a /\ e' = e /\ x' = x) as (-> & -> & -> & ->).
           {
               clear - H. induction C in C', H |-*, C'; invert H; firstorder. apply IHC in H1 as [->]. reflexivity.
           }
           clear H.
-          assert (aeval st11 e = aeval st12 e).
-          {
-              destruct w12; admit. 
-              (* This actually seems impossible currently: What if, speculatively, one execution is in-bounds while the other is not?
-                 For nonspeculative execution, we can assume (as an extra assumption) that this will not happen, but for speculative execution, such an assumption is not justifiable.
-              *)
-              
-          }
-          
-          admit.
+          destruct w12.
+          -- destruct Heqv1 as [<- Heqv1], Heqv2 as [<- Heqv2].
+             destruct (aeval st11 e <? length (ast11 a))%nat eqn: Ha, (aeval st12 e <? length (ast12 a))%nat eqn: Ha'.
+             ++ assert ( <(( (subst_hd C <{{ x <- a [[e]] }}>), st11, ast11, true • cl1rb))> -->rb_ [DStep] ^^ [OARead a (aeval st11 e)] <(((subst_hd C <{{ skip }}>), x !-> nth (aeval st11 e) (ast11 a) 0; st11, ast11, true • cl1rb ))> ) as Hrbstep1.
+                {
+                    clear - Ha. induction C.
+                    - cbn. eapply SpecRb_ARead. 1: reflexivity. 2: left; reflexivity. now apply ltb_lt.
+                    - cbn. constructor. exact IHC.
+                }
+                assert ( <(( (subst_hd C <{{ x <- a [[e]] }}>), st12, ast12, true • cl2rb))> -->rb_ [DStep] ^^ [OARead a (aeval st12 e)] <(((subst_hd C <{{ skip }}>), x !-> nth (aeval st12 e) (ast12 a) 0; st12, ast12, true • cl2rb ))> ) as Hrbstep2.
+                {
+                    clear - Ha'. induction C.
+                    - cbn. eapply SpecRb_ARead. 1: reflexivity. 2: left; reflexivity. now apply ltb_lt.
+                    - cbn. constructor. exact IHC.
+                }
+                eapply multi_spec_rb_trans in Hrbstep1. 2: constructor. eapply multi_rb_app in Hrbstep1. 2: exact Hrb1.
+                eapply multi_spec_rb_trans in Hrbstep2. 2: constructor. eapply multi_rb_app in Hrbstep2. 2: exact Hrb2.
+                specialize (Hrb_same _ _ _ _ _ _ _ _ _ _ _ _ _ Hrbstep1 Hrbstep2). invert Hrb_same.
+                apply app_inv_head in H0. invert H0.
+                assert (b = b' /\ j = j') as [<- <-]. { erewrite eq_lengths_same_accessed_location with (ast2 := ast12) in Hal1. 1: rewrite H1, Hal2 in Hal1; now invert Hal1. pose proof (am_preserves_lengths Hmulti11) as H11. pose proof (am_preserves_lengths Hmulti12) as H12. clear - Heq_lengths H11 H12. intros a. now rewrite <- H11, <- H12. }
+                assert (a = b /\ (aeval st11 e) = j) as [<- <-].
+                { clear - Hal1 Ha. 
+                    induction layout. 1: cbn in Hal1; congruence.
+                    simpl in Hal1. destruct (a0 =? a) eqn: Heq. 2: firstorder.
+                    rewrite String.eqb_eq in Heq. subst.
+                    rewrite Ha in Hal1. now invert Hal1.
+                }
+                rewrite <- H1 in Hrbstep2.
+                pose proof (am_no_leak_same_spec_state Hmulti21). destruct w1'. 2: { assert (@None nat = None) as H' by reflexivity; apply H in H'; destruct n; cbn in H'; congruence. }
+                pose proof (am_no_leak_same_spec_state Hmulti22). destruct w2'. 2: { assert (@None nat = None) as H' by reflexivity; apply H2 in H'; destruct n; cbn in H'; congruence. }
+                do 2 rewrite app_nil_r in Hrbstep1, Hrbstep2.
+                exists (ds ++ [DStep] ++ []), true, true, cl1rb, cl2rb. split. 2:split. 3: firstorder. 3: now rewrite (am_no_leak_same_conf_stack Hmulti21). 3: now rewrite (am_no_leak_same_conf_stack Hmulti22).
+                ** rewrite <- app_nil_r. rewrite app_assoc. eapply multi_rb_app. 1: exact Hrbstep1. eapply am_no_leak_rb_no_dirs. rewrite (am_no_leak_same_conf_stack Hmulti21) in Hmulti21. exact Hmulti21.
+                ** rewrite <- app_nil_r. rewrite app_assoc. eapply multi_rb_app. 1: exact Hrbstep2. eapply am_no_leak_rb_no_dirs. rewrite (am_no_leak_same_conf_stack Hmulti22) in Hmulti22. exact Hmulti22.
+             ++ assert ( <(( (subst_hd C <{{ x <- a [[e]] }}>), st11, ast11, true • cl1rb))> -->rb_ [DLoad b' j'] ^^ [OARead a (aeval st11 e)] <(((subst_hd C <{{ skip }}>), x !-> nth (aeval st11 e) (ast11 a) 0; st11, ast11, true • cl1rb ))> ) as Hrbstep1.
+               {
+                   clear - Ha. induction C.
+                   - cbn. eapply SpecRb_ARead. 1: reflexivity. 2: right; reflexivity. now apply ltb_lt.
+                   - cbn. constructor. exact IHC.
+               }
+               assert ( <(( (subst_hd C <{{ x <- a [[e]] }}>), st12, ast12, true • cl2rb))> -->rb_ [DLoad b' j'] ^^ [OARead a (aeval st12 e)] <(((subst_hd C <{{ skip }}>), x !-> nth j' (ast12 b') 0; st12, ast12, true • cl2rb ))> ) as Hrbstep2.
+               {
+                   clear - Ha' Hal2. induction C.
+                   - cbn. eapply SpecRb_ARead_U. 1: reflexivity. 1: now apply ltb_ge. admit.
+                   - cbn. constructor. exact IHC.
+               }
+               eapply multi_spec_rb_trans in Hrbstep1. 2: constructor. eapply multi_rb_app in Hrbstep1. 2: exact Hrb1.
+               eapply multi_spec_rb_trans in Hrbstep2. 2: constructor. eapply multi_rb_app in Hrbstep2. 2: exact Hrb2.
+               specialize (Hrb_same _ _ _ _ _ _ _ _ _ _ _ _ _ Hrbstep1 Hrbstep2). invert Hrb_same.
+               apply app_inv_head in H0. invert H0.
+               assert (length (ast11 a) = length (ast12 a)) as Heq.
+               { pose proof (am_preserves_lengths Hmulti11) as H11. pose proof (am_preserves_lengths Hmulti12) as H12. clear - Heq_lengths H11 H12. now rewrite <- H11, <- H12. }
+               rewrite H1, Heq in Ha. rewrite Ha in Ha'. congruence.
+             ++ assert ( <(( (subst_hd C <{{ x <- a [[e]] }}>), st11, ast11, true • cl1rb))> -->rb_ [DLoad b j] ^^ [OARead a (aeval st11 e)] <(((subst_hd C <{{ skip }}>), x !-> nth j (ast11 b) 0; st11, ast11, true • cl1rb ))> ) as Hrbstep1.
+               {
+                   clear - Ha Hal1. induction C.
+                   - cbn. eapply SpecRb_ARead_U. 1: reflexivity. 1: now apply ltb_ge. admit.
+                   - cbn. constructor. exact IHC.
+               }
+               assert ( <(( (subst_hd C <{{ x <- a [[e]] }}>), st12, ast12, true • cl2rb))> -->rb_ [DLoad b j] ^^ [OARead a (aeval st12 e)] <(((subst_hd C <{{ skip }}>), x !-> nth (aeval st12 e) (ast12 a) 0; st12, ast12, true • cl2rb ))> ) as Hrbstep2.
+               {
+                   clear - Ha' Hal2. induction C.
+                   - cbn. eapply SpecRb_ARead. 1: reflexivity. 1: now apply ltb_lt. right. reflexivity.
+                   - cbn. constructor. exact IHC.
+               }
+               eapply multi_spec_rb_trans in Hrbstep1. 2: constructor. eapply multi_rb_app in Hrbstep1. 2: exact Hrb1.
+               eapply multi_spec_rb_trans in Hrbstep2. 2: constructor. eapply multi_rb_app in Hrbstep2. 2: exact Hrb2.
+               specialize (Hrb_same _ _ _ _ _ _ _ _ _ _ _ _ _ Hrbstep1 Hrbstep2). invert Hrb_same.
+               apply app_inv_head in H0. invert H0.
+               assert (length (ast11 a) = length (ast12 a)) as Heq.
+               { pose proof (am_preserves_lengths Hmulti11) as H11. pose proof (am_preserves_lengths Hmulti12) as H12. clear - Heq_lengths H11 H12. now rewrite <- H11, <- H12. }
+               rewrite H1, Heq in Ha. rewrite Ha in Ha'. congruence.
+             ++ assert ( <(( (subst_hd C <{{ x <- a [[e]] }}>), st11, ast11, true • cl1rb))> -->rb_ [DLoad b j] ^^ [OARead a (aeval st11 e)] <(((subst_hd C <{{ skip }}>), x !-> nth j (ast11 b) 0; st11, ast11, true • cl1rb ))> ) as Hrbstep1.
+               {
+                   clear - Ha Hal1. induction C.
+                   - cbn. eapply SpecRb_ARead_U. 1: reflexivity. 1: now apply ltb_ge. admit.
+                   - cbn. constructor. exact IHC.
+               }
+               assert ( <(( (subst_hd C <{{ x <- a [[e]] }}>), st12, ast12, true • cl2rb))> -->rb_ [DLoad b j] ^^ [OARead a (aeval st12 e)] <(((subst_hd C <{{ skip }}>), x !-> nth j (ast12 b) 0; st12, ast12, true • cl2rb ))> ) as Hrbstep2.
+               {
+                   clear - Ha' Hal1. induction C.
+                   - cbn. eapply SpecRb_ARead_U. 1: reflexivity. 1: now apply ltb_ge. admit.
+                   - cbn. constructor. exact IHC.
+               }
+               eapply multi_spec_rb_trans in Hrbstep1. 2: constructor. eapply multi_rb_app in Hrbstep1. 2: exact Hrb1.
+               eapply multi_spec_rb_trans in Hrbstep2. 2: constructor. eapply multi_rb_app in Hrbstep2. 2: exact Hrb2.
+               specialize (Hrb_same _ _ _ _ _ _ _ _ _ _ _ _ _ Hrbstep1 Hrbstep2). invert Hrb_same.
+               apply app_inv_head in H0. invert H0.
+               assert (b = b' /\ j = j') as [<- <-]. { erewrite eq_lengths_same_accessed_location with (ast2 := ast12) in Hal1. 1: rewrite H1, Hal2 in Hal1; now invert Hal1. pose proof (am_preserves_lengths Hmulti11) as H11. pose proof (am_preserves_lengths Hmulti12) as H12. clear - Heq_lengths H11 H12. intros a. now rewrite <- H11, <- H12. }
+                exists (ds ++ [DLoad b j] ++ []), true, true, cl1rb, cl2rb. split. 2:split. 
+                3: {
+                    rewrite (am_no_leak_same_conf_stack Hmulti21), (am_no_leak_same_conf_stack Hmulti22). 
+                    pose proof (am_no_leak_same_spec_state Hmulti21); destruct w1'. 2: assert (@None nat = None) as H' by reflexivity; apply H in H'; destruct n; cbn in H'; congruence. clear H.
+                    pose proof (am_no_leak_same_spec_state Hmulti22); destruct w2'. 2: assert (@None nat = None) as H' by reflexivity; apply H in H'; destruct n; cbn in H'; congruence.
+                    firstorder.
+                }
+                ** rewrite <- app_nil_r. rewrite app_assoc. eapply multi_rb_app. 1: exact Hrbstep1. eapply am_no_leak_rb_no_dirs. rewrite (am_no_leak_same_conf_stack Hmulti21) in Hmulti21. exact Hmulti21.
+                ** rewrite <- app_nil_r. rewrite app_assoc. eapply multi_rb_app. 1: rewrite H1; exact Hrbstep2. eapply am_no_leak_rb_no_dirs. rewrite (am_no_leak_same_conf_stack Hmulti22) in Hmulti22. exact Hmulti22.
+          -- admit.
         * admit.
         * clear - Hstep1 Henabled. exfalso. dependent induction Hstep1.
           -- eapply IHHstep1; try reflexivity; assumption.
