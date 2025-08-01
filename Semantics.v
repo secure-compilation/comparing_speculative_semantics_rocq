@@ -1278,7 +1278,7 @@ Proof.
       + apply IHlayout.
 Qed.
 
-Lemma am_trace_pair_to_rb_trace_pair swin layout c st1 st2 ast1 ast2 c1' c2' st1' st2' ast1' ast2' w1' w2' cl1' cl2' os1 os2:
+Lemma am_trace_pair_to_rb_trace_pair {swin layout c st1 st2 ast1 ast2 c1' c2' st1' st2' ast1' ast2' w1' w2' cl1' cl2' os1 os2}:
     (forall a, length (ast1 a) = length (ast2 a)) -> 
     (forall ds c1' st1' ast1' cl1' os1,
     <([ [(c, st1, ast1, false)] ])> -->rb*_ds^^os1 <([ (c1', st1', ast1', false) :: cl1' ])> ->
@@ -1739,6 +1739,17 @@ Qed.
 
 
 Lemma rb_same_leakage_implies_am_same_leakage c st1 st2 ast1 ast2:
+    (forall a, length (ast1 a) = length (ast2 a)) -> 
+    (forall ds c1' st1' ast1' cl1' os1,
+    <([ [(c, st1, ast1, false)] ])> -->rb*_ds^^os1 <([ (c1', st1', ast1', false) :: cl1' ])> ->
+    exists c1'' st1'' ast1'',
+    <(( c1', st1', ast1', false • cl1'))> -->rb_[]^^[] <(( c1'', st1'', ast1'', false • cl1'))> \/
+    exists o, <(( c1', st1', ast1', false • cl1' ))> -->rb_[DStep]^^[o] <(( c1'', st1'', ast1'', false • cl1'))>) ->
+    (forall ds c2' st2' ast2' cl2' os2,
+    <([ [(c, st2, ast2, false)] ])> -->rb*_ds^^os2 <([ (c2', st2', ast2', false) :: cl2' ])> ->
+    exists c2'' st2'' ast2'',
+    <(( c2', st2', ast2', false • cl2'))> -->rb_[]^^[] <(( c2'', st2'', ast2'', false • cl2'))> \/
+    exists o, <(( c2', st2', ast2', false • cl2' ))> -->rb_[DStep]^^[o] <(( c2'', st2'', ast2'', false • cl2'))>) ->
     (forall ds c1' c2' st1' st2' ast1' ast2' b1' b2' cl1' cl2' os1 os2, 
     <([ [(c, st1, ast1, false)] ])> -->rb*_ds^^os1 <([ (c1', st1', ast1', b1') :: cl1' ])> ->
     <([ [(c, st2, ast2, false)] ])>  -->rb*_ds^^os2 <([ (c2', st2', ast2', b2') :: cl2' ])> ->
@@ -1749,4 +1760,8 @@ Lemma rb_same_leakage_implies_am_same_leakage c st1 st2 ast1 ast2:
     length os1 = length os2 ->
     os1 = os2).
 Proof.
-Admitted.
+    intros Heq_lengths Hsafe1 Hsafe2 Hrb_same.
+    intros ? ? ? ? ? ? ? ? ? ? ? ? ? ? Ham1 Ham2 Hamlen.
+    pose proof (am_trace_pair_to_rb_trace_pair Heq_lengths Hsafe1 Hsafe2 Hrb_same Ham1 Ham2 Hamlen) as (ds & b1' & b2' & cl1'rb & cl2'rb & Hrb1 & Hrb2 & _).
+    eapply Hrb_same; eassumption.
+Qed.
